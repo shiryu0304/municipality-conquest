@@ -51,7 +51,8 @@
       <div class="map-legend"><span><i class="legend-dot visited"></i>訪問済み</span><span><i class="legend-dot want"></i>行きたい</span><span><i class="legend-dot unvisited"></i>未訪問</span></div>
       <div class="map-toolbar"><label>地図の表示範囲<select id="mapPrefectureFilter"><option value="">全国</option></select></label><button type="button" id="resetMapView" class="button secondary">全国表示に戻す</button></div>
       <div id="japanMap" aria-label="市町村の訪問状況マップ"></div>
-      <p class="muted small map-note">地形の陰影・市区町村名を表示しています。地図の区域を押すと記録を編集できます。表示には通信が必要です。海域部は海上保安庁海洋情報部の資料を使用して作成。</p>
+      <p id="mapDetailStatus" class="muted small" role="status">地図を拡大するか都道府県を選ぶと、より詳細な境界を読み込みます。</p>
+      <p class="muted small map-note">地形の陰影・市区町村名を表示しています。地図の区域を押すと記録を編集できます。表示には通信が必要です。海域部は海上保安庁海洋情報部の資料を使用して作成。詳細境界の出典：国土交通省「国土数値情報（行政区域データ、2026年）」、加工：ricewin（CC BY 4.0）。</p>
     </section>
 
     <section class="panel controls">
