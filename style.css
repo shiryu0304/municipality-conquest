@@ -61,6 +61,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--green); box-shad
 .button.danger-ghost { color: #9b3f36; background: transparent; border-color: #ecd5d2; }
 .button-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .file-button { display: inline-flex; align-items: center; }
+.file-button[aria-disabled="true"] { opacity: .55; cursor: not-allowed; }
 .tools-panel > p { font-size: 13px; }
 #saveStatus { margin: 12px 0 0; }
 .empty-state { text-align: center; padding: 24px 8px; color: var(--muted); font-size: 13px; }

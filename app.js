@@ -18,6 +18,7 @@ const SAMPLE_MUNICIPALITIES = [
 
 const STORAGE_KEY = "municipality-conquest-records-v1";
 let municipalities = [...SAMPLE_MUNICIPALITIES];
+let municipalitiesReady = false;
 let records = loadRecords();
 let toastTimer;
 let map;
@@ -30,6 +31,13 @@ const searchInput = $("searchInput");
 const statusFilter = $("statusFilter");
 const municipalityList = $("municipalityList");
 const dialog = $("recordDialog");
+
+function setImportAvailability(ready, message) {
+  municipalitiesReady = ready;
+  $("importInput").disabled = !ready;
+  $("importLabel").setAttribute("aria-disabled", String(!ready));
+  $("importStatus").textContent = message;
+}
 
 function loadRecords() {
   try {
@@ -250,6 +258,11 @@ $("importInput").addEventListener("change", async (event) => {
   const file = event.target.files?.[0];
   if (!file) return;
   try {
+    // サンプル一覧で記録を絞り込むと、一覧外の記録が失われるため取り込まない。
+    if (!municipalitiesReady) {
+      alert("全国の自治体一覧を正常に読み込めていないため、バックアップは読み込めません。通信状態を確認して、ページを再読み込みしてください。現在の記録は変更していません。");
+      return;
+    }
     const parsed = JSON.parse(await file.text());
     const imported = parsed.records && typeof parsed.records === "object" ? parsed.records : parsed;
     if (!imported || typeof imported !== "object" || Array.isArray(imported)) {
@@ -441,6 +454,7 @@ function escapeHtml(value) {
 }
 
 async function initialize() {
+  setImportAvailability(false, "全国の自治体一覧を確認中です。完了するまでバックアップは読み込めません。");
   try {
     const response = await fetch(DATA_URL, { cache: "no-cache" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -451,10 +465,12 @@ async function initialize() {
     $("dataBadge").textContent = `全国データ ${municipalities.length.toLocaleString("ja-JP")} 件`;
     $("dataBadge").style.color = "#12664f";
     $("dataBadge").style.background = "#dff4e9";
+    setImportAvailability(true, "全国の自治体一覧を読み込みました。バックアップを読み込めます。");
   } catch (error) {
     console.warn("全国データを読み込めませんでした。サンプルデータで起動します。", error);
     $("dataBadge").textContent = "サンプルデータ";
     $("saveStatus").textContent = "全国データの読み込みに失敗しました。インターネット接続を確認してください。";
+    setImportAvailability(false, "全国の自治体一覧を読み込めないため、バックアップの読み込みを停止しています。通信状態を確認して、ページを再読み込みしてください。JSONの書き出しは利用できます。");
   }
   populatePrefectures();
   renderAll();

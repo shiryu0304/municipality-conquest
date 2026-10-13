@@ -85,9 +85,10 @@
       <p class="muted">記録はこのブラウザ内に保存されます。端末の変更やブラウザデータ消去に備え、定期的にバックアップしてください。</p>
       <div class="button-row">
         <button id="exportButton" class="button primary">JSONを書き出す</button>
-        <label class="button secondary file-button">バックアップを読み込む<input id="importInput" type="file" accept=".json,application/json" hidden></label>
+        <label id="importLabel" class="button secondary file-button" aria-disabled="true">バックアップを読み込む<input id="importInput" type="file" accept=".json,application/json" aria-describedby="importStatus" disabled hidden></label>
         <button id="resetButton" class="button danger-ghost">記録をリセット</button>
       </div>
+      <p id="importStatus" class="small muted" role="status">全国の自治体一覧を確認中です。完了するまでバックアップは読み込めません。</p>
       <p id="saveStatus" class="small muted" role="status">この端末に保存します。</p>
     </section>
 
