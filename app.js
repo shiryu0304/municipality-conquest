@@ -279,7 +279,19 @@ $("importInput").addEventListener("change", async (event) => {
         };
       }
     }
-    if (!confirm(`${Object.keys(cleaned).length} 件の記録を読み込みます。現在の記録は読み込んだ内容で置き換わります。よろしいですか？`)) return;
+    // 不正なデータや現在の自治体一覧と一致しない記録がある場合、
+    // その記録を黙って削除しないため、インポートを中止する。
+    const importedCount = Object.keys(cleaned).length;
+    const sourceCount = Object.keys(imported).length;
+    if (importedCount === 0) {
+      alert("読み込める訪問記録が0件でした。現在の記録を守るため、読み込みを中止しました。JSONファイルをご確認ください。");
+      return;
+    }
+    if (importedCount !== sourceCount) {
+      alert(`バックアップ内の ${sourceCount} 件のうち、${sourceCount - importedCount} 件が読み込めません。記録の消失を防ぐため、読み込みを中止しました。現在の記録は変更していません。`);
+      return;
+    }
+    if (!confirm(`${importedCount} 件の記録を読み込みます。現在の記録 ${Object.keys(records).length} 件は読み込んだ内容で置き換わります。事前にJSONを書き出しましたか？`)) return;
     records = cleaned;
     saveRecords();
     renderAll();

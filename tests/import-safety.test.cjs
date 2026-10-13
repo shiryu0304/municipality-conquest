@@ -255,3 +255,29 @@ test("map data failure does not block import when the municipality list succeede
   assert.equal(app.alerts.length, 0);
   assert.deepEqual(JSON.parse(app.stored()), importedRecords);
 });
+
+// 安全強化：不正なファイルにより現在の記録が消えないことを確認する。
+const rejectedBackups = [
+  ["empty backup", { app: "municipality-conquest", version: 1, records: {} }],
+  ["unknown municipality codes", { records: { "999999": { status: "visited", date: "", memo: "Unknown code" } } }],
+  ["mixed known and unknown municipality codes", { records: {
+    ...importedRecords, "999999": { status: "visited", date: "", memo: "Unknown code" }
+  } }],
+  ["invalid record status mixed with valid records", { records: {
+    ...importedRecords, "700004": { status: "invalid", date: "", memo: "Wrong status" }
+  } }]
+];
+
+for (const [name, backup] of rejectedBackups) {
+  test(`${name} must not replace existing records`, async () => {
+    const app = createApp();
+    await settle();
+    assertAvailability(app, true);
+    assert.equal(await app.importJSON(backup), 1);
+    assert.equal(app.confirmations.length, 0, "unsafe backup must not offer replacement");
+    assert.equal(app.alerts.length, 1, "must show a warning");
+    assert.equal(app.writes.length, 0, "must not write to storage");
+    assert.equal(app.stored(), originalRaw, "saved records must remain untouched");
+    assert.deepEqual((await app.exportJSON()).records, originalRecords);
+  });
+}
