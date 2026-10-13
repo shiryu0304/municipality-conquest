@@ -17,6 +17,8 @@ const SAMPLE_MUNICIPALITIES = [
 ];
 
 const STORAGE_KEY = "municipality-conquest-records-v1";
+// 直前のJSONインポート前の記録。通常の訪問記録とは別の保存場所に置く。
+const BEFORE_IMPORT_KEY = "municipality-conquest-before-import-v1";
 let municipalities = [...SAMPLE_MUNICIPALITIES];
 let municipalitiesReady = false;
 let records = loadRecords();
@@ -53,10 +55,52 @@ function saveRecords() {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
     $("saveStatus").textContent = `この端末に保存済み · 最終保存 ${new Date().toLocaleString("ja-JP")}`;
+    return true;
   } catch (error) {
+    console.error("訪問記録を保存できませんでした。", error);
     $("saveStatus").textContent = "保存できませんでした。JSONバックアップをお試しください。";
     showToast("保存に失敗しました。");
+    return false;
   }
+}
+
+// 保存された元データを文字列のまま保管することで、一覧外の自治体や未知の項目も残す。
+function getBeforeImportBackup() {
+  try {
+    const raw = localStorage.getItem(BEFORE_IMPORT_KEY);
+    if (!raw) return null;
+    const backup = JSON.parse(raw);
+    if (backup?.version !== 1 || typeof backup.savedAt !== "string" || typeof backup.recordsRaw !== "string") return null;
+    const restored = JSON.parse(backup.recordsRaw);
+    if (!restored || typeof restored !== "object" || Array.isArray(restored)) return null;
+    return { savedAt: backup.savedAt, records: restored, recordsRaw: backup.recordsRaw };
+  } catch (error) {
+    console.warn("読み込み前のバックアップを確認できませんでした。", error);
+    return null;
+  }
+}
+
+function updateRestoreAvailability() {
+  const backup = getBeforeImportBackup();
+  $("restoreBeforeImportButton").disabled = !backup;
+  $("restoreBeforeImportStatus").textContent = backup
+    ? `読み込み前の記録を保存済み：${new Date(backup.savedAt).toLocaleString("ja-JP")}（${Object.keys(backup.records).length}件）。次の読み込みで更新されます。`
+    : "復元できる読み込み前の記録は、まだありません。";
+}
+
+// これに失敗した場合は、JSONの読み込みによる上書き自体を行わない。
+function saveBeforeImportBackup() {
+  const raw = localStorage.getItem(STORAGE_KEY) ?? JSON.stringify(records);
+  const parsed = JSON.parse(raw);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("現在の保存データを確認できませんでした");
+  }
+  localStorage.setItem(BEFORE_IMPORT_KEY, JSON.stringify({
+    version: 1,
+    savedAt: new Date().toISOString(),
+    recordsRaw: raw
+  }));
+  updateRestoreAvailability();
 }
 
 function getRecord(code) {
@@ -218,12 +262,17 @@ $("recordForm").addEventListener("submit", (event) => {
   event.preventDefault();
   const code = $("recordCode").value;
   const status = $("recordStatus").value;
+  const previousRecord = records[code];
   records[code] = {
     status,
     date: status === "visited" ? $("recordDate").value : "",
     memo: $("recordMemo").value.trim()
   };
-  saveRecords();
+  if (!saveRecords()) {
+    if (previousRecord === undefined) delete records[code];
+    else records[code] = previousRecord;
+    return;
+  }
   closeDialog();
   renderAll();
   showToast("訪問記録を保存しました。");
@@ -291,11 +340,24 @@ $("importInput").addEventListener("change", async (event) => {
       alert(`バックアップ内の ${sourceCount} 件のうち、${sourceCount - importedCount} 件が読み込めません。記録の消失を防ぐため、読み込みを中止しました。現在の記録は変更していません。`);
       return;
     }
-    if (!confirm(`${importedCount} 件の記録を読み込みます。現在の記録 ${Object.keys(records).length} 件は読み込んだ内容で置き換わります。事前にJSONを書き出しましたか？`)) return;
+    if (!confirm(`${importedCount} 件の記録を読み込みます。現在の記録 ${Object.keys(records).length} 件は読み込んだ内容で置き換わります。読み込み前の記録を自動保存しますが、念のためJSONも書き出しましたか？`)) return;
+    // 元データの退避に失敗した場合は、上書きを絶対に始めない。
+    try {
+      saveBeforeImportBackup();
+    } catch (error) {
+      console.error("読み込み前のバックアップ作成に失敗しました。", error);
+      alert("読み込み前の記録を自動保存できなかったため、JSONの読み込みを中止しました。現在の記録は変更していません。ブラウザの保存容量や設定を確認してください。");
+      return;
+    }
+    const previousRecords = records;
     records = cleaned;
-    saveRecords();
+    if (!saveRecords()) {
+      records = previousRecords;
+      alert("新しい記録を保存できなかったため、読み込みを中止しました。現在の記録は変更していません。");
+      return;
+    }
     renderAll();
-    showToast("バックアップを読み込みました。");
+    showToast("バックアップを読み込みました。読み込み前の記録も保存しました。");
   } catch (error) {
     alert("ファイルを読み込めませんでした。アプリのJSONバックアップを選んでください。");
   } finally {
@@ -303,10 +365,34 @@ $("importInput").addEventListener("change", async (event) => {
   }
 });
 
+$("restoreBeforeImportButton").addEventListener("click", () => {
+  const backup = getBeforeImportBackup();
+  if (!backup) {
+    updateRestoreAvailability();
+    alert("復元できる読み込み前の記録がありません。");
+    return;
+  }
+  const count = Object.keys(backup.records).length;
+  if (!confirm(`読み込み前の記録 ${count} 件に戻します。現在の記録 ${Object.keys(records).length} 件は置き換えられ、読み込み後に追加・変更した記録も失われます。現在の記録をJSONに書き出しましたか？`)) return;
+  const previousRecords = records;
+  records = backup.records;
+  if (!saveRecords()) {
+    records = previousRecords;
+    alert("復元した記録を保存できませんでした。現在の記録は変更していません。");
+    return;
+  }
+  renderAll();
+  showToast("読み込み前の記録に戻しました。");
+});
+
 $("resetButton").addEventListener("click", () => {
   if (!confirm("このブラウザに保存されている訪問記録をすべて削除します。事前にバックアップしましたか？")) return;
+  const previousRecords = records;
   records = {};
-  saveRecords();
+  if (!saveRecords()) {
+    records = previousRecords;
+    return;
+  }
   renderAll();
   showToast("記録をリセットしました。");
 });
@@ -466,6 +552,7 @@ function escapeHtml(value) {
 }
 
 async function initialize() {
+  updateRestoreAvailability();
   setImportAvailability(false, "全国の自治体一覧を確認中です。完了するまでバックアップは読み込めません。");
   try {
     const response = await fetch(DATA_URL, { cache: "no-cache" });

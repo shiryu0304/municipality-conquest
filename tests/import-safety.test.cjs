@@ -10,6 +10,7 @@ const root = path.resolve(__dirname, "..");
 const source = readFileSync(path.join(root, "app.js"), "utf8");
 const html = readFileSync(path.join(root, "index.html"), "utf8");
 const storageKey = "municipality-conquest-records-v1";
+const beforeImportKey = "municipality-conquest-before-import-v1";
 const originalRecords = {
   "131016": { status: "visited", date: "2025-01-02", memo: "Sample municipality" },
   "700001": { status: "visited", date: "2026-02-03", memo: "Outside the sample list" }
@@ -65,7 +66,10 @@ class Element {
   click() { return this.dispatch("click"); }
 }
 
-function createApp({ fetchList, initialRaw = originalRaw, confirm = true, mapFailure = false } = {}) {
+function createApp({
+  fetchList, initialRaw = originalRaw, confirm = true, mapFailure = false,
+  initialBackupRaw = null, failSetItemFor = null
+} = {}) {
   const elements = new Map();
   for (const match of html.matchAll(/<\w+\b[^>]*\bid="([^"]+)"[^>]*>/g)) {
     const element = new Element();
@@ -77,6 +81,7 @@ function createApp({ fetchList, initialRaw = originalRaw, confirm = true, mapFai
   }
   elements.get("statusFilter").value = "all";
   const storage = new Map([[storageKey, initialRaw]]);
+  if (initialBackupRaw !== null) storage.set(beforeImportKey, initialBackupRaw);
   const writes = [];
   const alerts = [];
   const confirmations = [];
@@ -94,7 +99,11 @@ function createApp({ fetchList, initialRaw = originalRaw, confirm = true, mapFai
     },
     localStorage: {
       getItem: key => storage.get(key) ?? null,
-      setItem(key, value) { writes.push({ key, value }); storage.set(key, value); }
+      setItem(key, value) {
+        if (key === failSetItemFor) throw new Error("Simulated storage full");
+        writes.push({ key, value });
+        storage.set(key, value);
+      }
     },
     fetch: async url => {
       fetches.push(url);
@@ -119,6 +128,8 @@ function createApp({ fetchList, initialRaw = originalRaw, confirm = true, mapFai
   return {
     elements, writes, alerts, confirmations, fetches,
     stored: () => storage.get(storageKey),
+    savedSnapshot: () => storage.get(beforeImportKey) ?? null,
+    async restore() { await elements.get("restoreBeforeImportButton").dispatch("click"); },
     async importJSON(data) {
       let reads = 0;
       const input = elements.get("importInput");
@@ -213,8 +224,10 @@ for (const format of ["wrapped backup", "records-only backup"]) {
     assert.equal(app.alerts.length, 0);
     assert.equal(app.confirmations.length, 1);
     assert.match(app.confirmations[0], /2 件/);
-    assert.equal(app.writes.length, 1);
-    assert.equal(app.writes[0].key, storageKey);
+    assert.equal(app.writes.length, 2);
+    assert.equal(app.writes[0].key, beforeImportKey, "snapshot must be saved before replacement");
+    assert.equal(app.writes[1].key, storageKey);
+    assert.equal(JSON.parse(app.savedSnapshot()).recordsRaw, originalRaw);
     assert.deepEqual(JSON.parse(app.stored()), importedRecords);
     assert.equal(app.elements.get("importInput").value, "");
     assert.deepEqual((await app.exportJSON()).records, importedRecords);
@@ -281,3 +294,120 @@ for (const [name, backup] of rejectedBackups) {
     assert.deepEqual((await app.exportJSON()).records, originalRecords);
   });
 }
+
+// 追加テスト：読み込み直前の自動保存と復元の安全性。
+test("restore button starts disabled and is enabled only after a valid import", async () => {
+  const app = createApp();
+  await settle();
+  assert.equal(app.elements.get("restoreBeforeImportButton").disabled, true);
+  assert.equal(app.savedSnapshot(), null);
+  await app.importJSON({ records: importedRecords });
+  assert.equal(app.elements.get("restoreBeforeImportButton").disabled, false);
+  assert.equal(JSON.parse(app.savedSnapshot()).recordsRaw, originalRaw);
+});
+
+test("import automatically saves exact original data, then restore recovers it", async () => {
+  const app = createApp();
+  await settle();
+  await app.importJSON({ records: importedRecords });
+  assert.deepEqual(JSON.parse(app.stored()), importedRecords);
+  assert.match(app.elements.get("restoreBeforeImportStatus").textContent, /2件/);
+  await app.restore();
+  assert.equal(app.stored(), originalRaw, "restored storage must exactly match old data");
+  assert.deepEqual((await app.exportJSON()).records, originalRecords);
+  assert.equal(app.confirmations.length, 2);
+  assert.match(app.confirmations[1], /追加・変更/);
+});
+
+test("the saved pre-import data survives a page reload", async () => {
+  const first = createApp();
+  await settle();
+  await first.importJSON({ records: importedRecords });
+  const second = createApp({ initialRaw: first.stored(), initialBackupRaw: first.savedSnapshot() });
+  await settle();
+  assert.equal(second.elements.get("restoreBeforeImportButton").disabled, false);
+  await second.restore();
+  assert.equal(second.stored(), originalRaw);
+});
+
+test("no snapshot is written if the user cancels the import", async () => {
+  const app = createApp({ confirm: false });
+  await settle();
+  await app.importJSON({ records: importedRecords });
+  assert.equal(app.savedSnapshot(), null);
+  assert.equal(app.stored(), originalRaw);
+  assert.equal(app.elements.get("restoreBeforeImportButton").disabled, true);
+});
+
+test("a failure to save the safety copy blocks import without changing records", async () => {
+  const app = createApp({ failSetItemFor: beforeImportKey });
+  await settle();
+  await app.importJSON({ records: importedRecords });
+  assert.equal(app.stored(), originalRaw);
+  assert.equal(app.savedSnapshot(), null);
+  assert.equal(app.writes.length, 0);
+  assert.equal(app.alerts.length, 1);
+  assert.match(app.alerts[0], /自動保存できなかった/);
+});
+
+test("a failure to save imported records rolls back in-memory records", async () => {
+  const app = createApp({ failSetItemFor: storageKey });
+  await settle();
+  await app.importJSON({ records: importedRecords });
+  assert.equal(app.stored(), originalRaw);
+  assert.equal(JSON.parse(app.savedSnapshot()).recordsRaw, originalRaw);
+  assert.deepEqual((await app.exportJSON()).records, originalRecords);
+  assert.equal(app.alerts.length, 1);
+});
+
+test("a cancelled restore does not alter imported records", async () => {
+  // Confirmation returns false for the restore, but import happened in a previous session.
+  const first = createApp();
+  await settle();
+  await first.importJSON({ records: importedRecords });
+  const second = createApp({
+    initialRaw: first.stored(), initialBackupRaw: first.savedSnapshot(), confirm: false
+  });
+  await settle();
+  await second.restore();
+  assert.deepEqual(JSON.parse(second.stored()), importedRecords);
+  assert.equal(second.writes.length, 0);
+});
+
+test("invalid/corrupted restore data cannot overwrite records", async () => {
+  const app = createApp({
+    initialRaw: JSON.stringify(importedRecords),
+    initialBackupRaw: JSON.stringify({ version: 1, savedAt: new Date().toISOString(), recordsRaw: "not-json" })
+  });
+  await settle();
+  assert.equal(app.elements.get("restoreBeforeImportButton").disabled, true);
+  await app.restore();
+  assert.deepEqual(JSON.parse(app.stored()), importedRecords);
+  assert.equal(app.writes.length, 0);
+  assert.equal(app.alerts.length, 1);
+});
+
+test("the next successful import updates the safety copy to the latest pre-import records", async () => {
+  const app = createApp();
+  await settle();
+  await app.importJSON({ records: importedRecords });
+  const anotherRecord = { "700004": { status: "visited", date: "2026-04-01", memo: "New" } };
+  await app.importJSON({ records: anotherRecord });
+  assert.deepEqual(JSON.parse(JSON.parse(app.savedSnapshot()).recordsRaw), importedRecords);
+  await app.restore();
+  assert.deepEqual(JSON.parse(app.stored()), importedRecords);
+});
+
+test("restore refuses to replace records if the browser cannot save", async () => {
+  const first = createApp();
+  await settle();
+  await first.importJSON({ records: importedRecords });
+  const second = createApp({
+    initialRaw: first.stored(), initialBackupRaw: first.savedSnapshot(), failSetItemFor: storageKey
+  });
+  await settle();
+  await second.restore();
+  assert.deepEqual(JSON.parse(second.stored()), importedRecords);
+  assert.deepEqual((await second.exportJSON()).records, importedRecords);
+  assert.equal(second.alerts.length, 1);
+});
