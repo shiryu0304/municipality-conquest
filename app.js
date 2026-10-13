@@ -491,6 +491,9 @@ function renderMapLayer(prefecture = "") {
   }).addTo(map);
   const bounds = municipalityGeoLayer.getBounds();
   if (bounds.isValid()) {
+    // Keep panning near Japan even when users zoom or drag the map.
+    // Do not replace this with fixed coordinates: the bounds come from actual map data.
+    if (!prefecture) map.setMaxBounds(bounds.pad(0.1));
     map.fitBounds(bounds, { padding: [14, 14], maxZoom: prefecture ? 8 : 5 });
   }
   const count = features.length;
@@ -505,12 +508,14 @@ function initializeMap() {
     $("mapBadge").textContent = "地図ライブラリを読み込めません";
     return;
   }
-  map = L.map("japanMap", { scrollWheelZoom: true, preferCanvas: true }).setView([36.2, 138.2], 5);
-  // Keep the raster basemap for geographic context; municipality boundaries are drawn as vector polygons.
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
-  }).addTo(map);
+  // Show only Japan's municipality polygons; foreign land and street tiles stay hidden.
+  map = L.map("japanMap", {
+    scrollWheelZoom: true,
+    preferCanvas: true,
+    minZoom: 3,
+    maxZoom: 12,
+    maxBoundsViscosity: 1.0
+  }).setView([36.2, 138.2], 5);
 
   mapPrefectureFilter.addEventListener("change", () => renderMapLayer(mapPrefectureFilter.value));
   $("resetMapView").addEventListener("click", () => {
