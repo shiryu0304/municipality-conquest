@@ -448,13 +448,14 @@ function findMunicipalityForFeature(feature) {
   return municipalities.find(m => m.prefecture === pref && names.includes(m.name)) || null;
 }
 
+// 地形と自治体境界を同時に見られるよう、未訪問地域は薄い透明色にする。
 function getMapStatusColor(feature) {
   const municipality = findMunicipalityForFeature(feature);
-  if (!municipality) return { color: "#aab8af", weight: 0.7, fillColor: "#e8eeea", fillOpacity: 0.5 };
+  if (!municipality) return { color: "#667b6d", weight: 0.55, fillColor: "#f2f5ec", fillOpacity: 0.06 };
   const status = getRecord(municipality.code).status;
-  if (status === "visited") return { color: "#ffffff", weight: 0.7, fillColor: "#21845f", fillOpacity: 0.92 };
-  if (status === "want") return { color: "#ffffff", weight: 0.7, fillColor: "#e6a63b", fillOpacity: 0.94 };
-  return { color: "#82958a", weight: 0.7, fillColor: "#dfe8e2", fillOpacity: 0.9 };
+  if (status === "visited") return { color: "#235743", weight: 0.65, fillColor: "#19865b", fillOpacity: 0.64 };
+  if (status === "want") return { color: "#866321", weight: 0.65, fillColor: "#f0b94e", fillOpacity: 0.63 };
+  return { color: "#53685b", weight: 0.55, fillColor: "#ffffff", fillOpacity: 0.05 };
 }
 
 function refreshMapStyles() {
@@ -476,6 +477,8 @@ function renderMapLayer(prefecture = "") {
   });
   if (municipalityGeoLayer) map.removeLayer(municipalityGeoLayer);
   municipalityGeoLayer = L.geoJSON({ type: "FeatureCollection", features }, {
+    // Leafletによる境界線の描画時の省略を減らす。元の行政区域データは変更しない。
+    smoothFactor: 0.35,
     style: getMapStatusColor,
     onEachFeature: (feature, layer) => {
       const municipality = findMunicipalityForFeature(feature);
@@ -508,7 +511,8 @@ function initializeMap() {
     $("mapBadge").textContent = "地図ライブラリを読み込めません";
     return;
   }
-  // Show only Japan's municipality polygons; foreign land and street tiles stay hidden.
+  // 日本国内の地形だけを提供する地理院タイルを使う。
+  // OpenStreetMap等の世界地図は使わず、従来の日本付近への移動制限も保持する。
   map = L.map("japanMap", {
     scrollWheelZoom: true,
     preferCanvas: true,
@@ -516,6 +520,40 @@ function initializeMap() {
     maxZoom: 12,
     maxBoundsViscosity: 1.0
   }).setView([36.2, 138.2], 5);
+
+  // 南鳥島・沖ノ鳥島・与那国島などを含む、日本周辺のタイル取得範囲。
+  // 実際の市区町村の表示範囲はGeoJSONで制限する。
+  const terrainTileBounds = [[20, 122], [46, 154]];
+  const gsiTileOptions = {
+    bounds: terrainTileBounds,
+    minZoom: 3,
+    minNativeZoom: 5,
+    maxZoom: 12,
+    tileSize: 256,
+    keepBuffer: 2
+  };
+  // 標高による色分け（山・平野）を表示する。
+  L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/relief/{z}/{x}/{y}.png", {
+    ...gsiTileOptions,
+    zIndex: 1,
+    className: "japan-relief-tiles",
+    attribution: '<a href="https://maps.gsi.go.jp/development/ichiran.html" target="_blank" rel="noopener noreferrer">地理院タイル（国土地理院）</a>'
+  }).addTo(map);
+  // 陰影によって山の起伏を表現する。白地は乗算合成で地形の色を維持。
+  L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/hillshademap/{z}/{x}/{y}.png", {
+    ...gsiTileOptions,
+    maxNativeZoom: 12,
+    zIndex: 2,
+    className: "japan-hillshade-tiles",
+    opacity: 0.38
+  }).addTo(map);
+  // 市区町村名・行政界の文字を表示。道路や外国の地形は表示しない。
+  L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/blank/{z}/{x}/{y}.png", {
+    ...gsiTileOptions,
+    zIndex: 3,
+    className: "japan-name-tiles",
+    opacity: 0.88
+  }).addTo(map);
 
   mapPrefectureFilter.addEventListener("change", () => renderMapLayer(mapPrefectureFilter.value));
   $("resetMapView").addEventListener("click", () => {
